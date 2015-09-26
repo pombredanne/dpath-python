@@ -6,6 +6,7 @@ import fnmatch
 import shlex
 import sys
 import traceback
+from collections import MutableSequence, MutableMapping
 
 def path_types(obj, path):
     """
@@ -15,10 +16,10 @@ def path_types(obj, path):
     #for elem in path[:-1]:
     cur = obj
     for elem in path[:-1]:
-        if ((issubclass(cur.__class__, dict) and elem in cur)):
+        if ((issubclass(cur.__class__, MutableMapping) and elem in cur)):
             result.append([elem, cur[elem].__class__])
             cur = cur[elem]
-        elif (issubclass(cur.__class__, (list, tuple)) and int(elem) < len(cur)):
+        elif (issubclass(cur.__class__, MutableSequence) and int(elem) < len(cur)):
             elem = int(elem)
             result.append([elem, cur[elem].__class__])
             cur = cur[elem]
@@ -42,7 +43,7 @@ def paths_only(path):
         l.append(p[0])
     return l
 
-def validate(path, separator="/", regex=None):
+def validate(path, regex=None):
     """
     Validate that all the keys in the given list of path components are valid, given that they do not contain the separator, and match any optional regex given.
     """
@@ -50,19 +51,14 @@ def validate(path, separator="/", regex=None):
     for elem in path:
         key = elem[0]
         strkey = str(key)
-        if (separator and (separator in strkey)):
-            raise dpath.exceptions.InvalidKeyName("{} at {} contains the separator {}"
-                                                  "".format(strkey,
-                                                            separator.join(validated),
-                                                            separator))
-        elif (regex and (not regex.findall(strkey))):
+        if (regex and (not regex.findall(strkey))):
             raise dpath.exceptions.InvalidKeyName("{} at {} does not match the expression {}"
                                                   "".format(strkey,
-                                                            separator.join(validated),
+                                                            validated,
                                                             regex.pattern))
         validated.append(strkey)
 
-def paths(obj, dirs=True, leaves=True, path=[], skip=False, separator="/"):
+def paths(obj, dirs=True, leaves=True, path=[], skip=False):
     """Yield all paths of the object.
 
     Arguments:
@@ -77,7 +73,7 @@ def paths(obj, dirs=True, leaves=True, path=[], skip=False, separator="/"):
     skip -- Skip special keys beginning with '+'.
 
     """
-    if isinstance(obj, dict):
+    if isinstance(obj, MutableMapping):
         # Python 3 support
         if PY3:
             iteritems = obj.items()
@@ -94,17 +90,17 @@ def paths(obj, dirs=True, leaves=True, path=[], skip=False, separator="/"):
                 elif (skip and k[0] == '+'):
                     continue
             newpath = path + [[k, v.__class__]]
-            validate(newpath, separator=separator)
+            validate(newpath)
             if dirs:
                 yield newpath
-            for child in paths(v, dirs, leaves, newpath, skip, separator=separator):
+            for child in paths(v, dirs, leaves, newpath, skip):
                 yield child
-    elif isinstance(obj, (list, tuple)):
+    elif isinstance(obj, MutableSequence):
         for (i, v) in enumerate(obj):
             newpath = path + [[i, v.__class__]]
             if dirs:
                 yield newpath
-            for child in paths(obj[i], dirs, leaves, newpath, skip, separator=separator):
+            for child in paths(obj[i], dirs, leaves, newpath, skip):
                 yield child
     elif leaves:
         yield path + [[obj, obj.__class__]]
@@ -150,7 +146,7 @@ def match(path, glob):
 def is_glob(string):
     return any([c in string for c in '*?[]!'])
 
-def set(obj, path, value, create_missing=True, separator="/", afilter=None):
+def set(obj, path, value, create_missing=True, afilter=None):
     """Set the value of the given path in the object. Path
     must be a list of specific path elements, not a glob.
     You can use dpath.util.set for globs, but the paths must
@@ -199,16 +195,16 @@ def set(obj, path, value, create_missing=True, separator="/", afilter=None):
         creator = None
         accessor = None
         assigner = None
-        if issubclass(obj.__class__, (dict)):
+        if issubclass(obj.__class__, (MutableMapping)):
             tester = _presence_test_dict
             creator = _create_missing_dict
             accessor = _accessor_dict
             assigner = _assigner_dict
-        elif issubclass(obj.__class__, (list, tuple)):
+        elif issubclass(obj.__class__, MutableSequence):
             if not str(elem_value).isdigit():
                 raise TypeError("Can only create integer indexes in lists, "
                                 "not {}, in {}".format(type(obj),
-                                                       separator.join(traversed)
+                                                       traversed
                                                        )
                                 )
             tester = _presence_test_list
@@ -217,7 +213,7 @@ def set(obj, path, value, create_missing=True, separator="/", afilter=None):
             assigner = _assigner_list
         else:
             raise TypeError("Unable to path into elements of type {} "
-                            "at {}".format(obj, separator.join(traversed)))
+                            "at {}".format(obj, traversed))
 
         if (not tester(obj, elem)) and (create_missing):
             creator(obj, elem)
@@ -225,7 +221,7 @@ def set(obj, path, value, create_missing=True, separator="/", afilter=None):
             raise dpath.exceptions.PathNotFound(
                 "{} does not exist in {}".format(
                     elem,
-                    separator.join(traversed)
+                    traversed
                     )
                 )
         traversed.append(elem_value)
@@ -261,22 +257,22 @@ def get(obj, path, view=False, afilter=None):
         target = target[key]
 
         if view:
-            if isinstance(tail, dict):
-                if issubclass(pair[1], (list, dict)) and index != path_count:
+            if isinstance(tail, MutableMapping):
+                if issubclass(pair[1], (MutableSequence, MutableMapping)) and index != path_count:
                     tail[key] = pair[1]()
                 else:
                     tail[key] = target
                 up = tail
                 tail = tail[key]
-            elif issubclass(tail.__class__, (list, tuple)):
-                if issubclass(pair[1], (list, tuple, dict)) and index != path_count:
+            elif issubclass(tail.__class__, MutableSequence):
+                if issubclass(pair[1], (MutableSequence, MutableMapping)) and index != path_count:
                     tail.append(pair[1]())
                 else:
                     tail.append(target)
                 up = tail
                 tail = tail[-1]
 
-        if not issubclass(target.__class__, (list, dict)):
+        if not issubclass(target.__class__, (MutableSequence, MutableMapping)):
             if (afilter and (not afilter(target))):
                 raise dpath.exceptions.FilteredValue
 
